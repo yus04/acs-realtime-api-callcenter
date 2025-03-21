@@ -21,32 +21,50 @@ async def main():
     try:  
         # ジョブのクリーンアップ  
         print("ジョブをクリーンアップしています...")  
-        async for job in router_client.list_jobs():  
+        async for job_item in router_client.list_jobs():  
             try:  
-                # ジョブのキャンセルと削除  
-                await router_client.cancel_job(job_id=job.id)  
-                print(f"キャンセルされたジョブ: {job.id}")  
+                job = await router_client.get_job(job_item.id)  
+                job_status = job.status  
   
-                if job.assignments:  
+                if job_status == 'assigned':  
+                    print(f"ジョブを完了しています: {job.id}")  
+                    for assignment_id in job.assignments.keys():  
+                        # ジョブを完了  
+                        await router_client.complete_job(  
+                            job_id=job.id,  
+                            assignment_id=assignment_id  
+                        )  
+                        # アサインメントをクローズ  
+                        await router_client.close_job(  
+                            job_id=job.id,  
+                            assignment_id=assignment_id  
+                        )  
+                        print(f"アサインメントを完了し、クローズしました: {assignment_id}（ジョブID: {job.id}）")  
+                elif job_status == 'completed':  
+                    print(f"ジョブのアサインメントをクローズしています: {job.id}")  
                     for assignment_id in job.assignments.keys():  
                         await router_client.close_job(  
                             job_id=job.id,  
-                            assignment_id=assignment_id,  
-                            disposition_code="Cancelled"  
+                            assignment_id=assignment_id  
                         )  
-                        print(f"クローズされたジョブ: {job.id}（アサインメントID: {assignment_id}）")  
+                        print(f"クローズされたアサインメント: {assignment_id}（ジョブID: {job.id}）")  
+                elif job_status in ['queued', 'notSpecified', 'scheduled']:  
+                    print(f"ジョブをキャンセルしています: {job.id}")  
+                    await router_client.cancel_job(job_id=job.id)  
+                    print(f"キャンセルされたジョブ: {job.id}")  
                 else:  
-                    print(f"ジョブ {job.id} にアサインメントがありません。")  
+                    print(f"ジョブ {job.id} はステータス {job_status} です。削除を進めます。")  
   
+                # ジョブを削除  
                 await router_client.delete_job(job.id)  
                 print(f"削除されたジョブ: {job.id}")  
   
             except ResourceNotFoundError:  
-                print(f"ジョブが見つかりませんでした: {job.id}")  
+                print(f"ジョブが見つかりませんでした: {job_item.id}")  
             except HttpResponseError as e:  
-                print(f"ジョブの処理中にエラーが発生しました {job.id}: {e}")  
+                print(f"ジョブの処理中にエラーが発生しました {job_item.id}: {e}")  
             except Exception as e:  
-                print(f"予期せぬエラーが発生しました {job.id}: {e}")  
+                print(f"予期せぬエラーが発生しました {job_item.id}: {e}")  
   
         # ワーカーのクリーンアップ  
         print("ワーカーをクリーンアップしています...")  
@@ -74,7 +92,7 @@ async def main():
   
     finally:  
         # クライアントセッションを閉じる  
-        await router_client.close()  
+        await router_client.__aexit__(None, None, None)  
   
 if __name__ == "__main__":  
     asyncio.run(main())  
