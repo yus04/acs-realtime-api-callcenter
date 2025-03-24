@@ -1,0 +1,11 @@
+from azure.communication.callautomation.aio import CallAutomationClient as AsyncCallAutomationClient
+from azure.communication.jobrouter.aio import JobRouterClient as AsyncJobRouterClient
+from azure.communication.jobrouter.aio import JobRouterAdministrationClient as AsyncJobRouterAdministrationClient
+from config import ACS_CONNECTION_STRING
+
+# Initialize ACS Call Automation client
+acs_client = AsyncCallAutomationClient.from_connection_string(ACS_CONNECTION_STRING)
+
+# Initialize Job Router clients
+router_admin_client = AsyncJobRouterAdministrationClient.from_connection_string(ACS_CONNECTION_STRING)
+router_client = AsyncJobRouterClient.from_connection_string(ACS_CONNECTION_STRING)
