@@ -33,10 +33,15 @@ async def read_root():
 async def incoming_call_handler(request: Request):
     print_debug("Incoming call received")
     events = await request.json()
-    print_debug("events:", events, log_level="debug")
     for event_dict in events:
+        print_debug("event_dict:", {
+            **event_dict,
+            'data': {
+                **event_dict['data'],
+                'incomingCallContext': '****'
+            }
+        }, log_level="debug")
         event = EventGridEvent.from_dict(event_dict)
-        print_debug("event:", event, log_level="debug")
         if event.event_type == SystemEventNames.EventGridSubscriptionValidationEventName:
             validation_code = event.data["validationCode"]
             print_debug("Validation code:", validation_code)
