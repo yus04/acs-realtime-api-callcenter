@@ -16,9 +16,9 @@ from azure.communication.callautomation import (
     DtmfTone,
 )
 
-from config import CALLBACK_EVENTS_URI
+from config import CALLBACK_EVENTS_URI, TRIGGER_MODE
 from clients import acs_client
-from job_router import submit_job_to_queue, handle_job_offers, handle_job_completion
+from job_router import submit_job_to_queue, handle_job_offers, handle_job_offer_event, handle_job_completion
 from conversation_manager import update_conversation
 from utils import print_debug, parse_communication_identifier
 
@@ -81,9 +81,11 @@ async def incoming_call_handler(request: Request):
 
             selected_role = "RoleDefault"
             generated_job_id = str(uuid.uuid4())
+            queue_id = request.app.state.queues["queue-0"]["id"]
+            print_debug("queue_id:", queue_id)
             # Assuming a queue has already been created and attached to the FastAPI app state
             submitted_job_id = await submit_job_to_queue(
-                generated_job_id, "voice", request.app.state.queue.id, priority=1, role_label=selected_role
+                generated_job_id, "voice", queue_id, priority=1, role_label=selected_role
             )
 
             request.app.state.job_id_to_call_id[submitted_job_id] = call_id
@@ -101,14 +103,15 @@ async def incoming_call_handler(request: Request):
             }
 
             request.app.state.conversation_states[call_id] = conversation_state
-            # conversation_state = request.app.state.conversation_states[call_id]
             print_debug("Conversation states:", conversation_state)
 
             # Start processing job offers asynchronously
-            if not conversation_state.get("job_offer_task"):
+            if conversation_state.get("job_offer_task"):
+                conversation_state["job_offer_task"].cancel()
+            if TRIGGER_MODE == "polling":
                 conversation_state["job_offer_task"] = asyncio.create_task(
                     handle_job_offers(submitted_job_id, call_id, conversation_state)
-            )
+                )
             return Response(status_code=200)
     return Response(status_code=400)
 
@@ -159,24 +162,32 @@ async def handle_callback(call_id: str, request: Request):
 
             new_job_id = str(uuid.uuid4())
             conversation_state["job_id"] = new_job_id
+            queue_id = request.app.state.queues["queue-1"]["id"]
+            print_debug("queue_id:", queue_id)
             submitted_job_id = await submit_job_to_queue(
                 new_job_id,
                 "voice",
-                request.app.state.queue.id,
+                queue_id,
                 priority=1,
                 role_label=conversation_state["current_role"],
             )
             request.app.state.job_id_to_call_id[new_job_id] = call_id
             print_debug("Job ID to call ID mapping:", request.app.state.job_id_to_call_id)
-            # asyncio.create_task(handle_job_offers(submitted_job_id, call_id, conversation_state))
-            if not conversation_state.get("job_offer_task"):
+            if conversation_state.get("job_offer_task"):
                 conversation_state["job_offer_task"].cancel()
-            conversation_state["job_offer_task"] = asyncio.create_task(
-                handle_job_offers(submitted_job_id, call_id, conversation_state)
-            )
+            if TRIGGER_MODE == "polling":
+                conversation_state["job_offer_task"] = asyncio.create_task(
+                    handle_job_offers(submitted_job_id, call_id, conversation_state)
+                )
             await update_conversation(call_id, conversation_state)
-        elif event.type == "Microsoft.Communication.RecognizeCompleted":
-            print_debug("Recognize completed")
+        elif event.type == "Microsoft.Communication.RouterJobQueued":
+            print_debug("Job queued")
+        elif event.type == "Microsoft.Communication.RouterJobOffered":
+            print_debug("Job offered")
+            if TRIGGER_MODE == "event":
+                handle_job_offer_event(event, call_id, conversation_state)
+        elif event.type == "Microsoft.Communication.RouterWorkerOfferAccepted":
+            print_debug("Worker offer accepted")
         elif event.type == "Microsoft.Communication.MediaStreamingStarted":
             print_debug("Media streaming started")
         elif event.type == "Microsoft.Communication.CallDisconnected":

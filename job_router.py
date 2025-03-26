@@ -11,42 +11,52 @@ from clients import router_admin_client, router_client
 
 async def init_job_router_state(app):
     """
-    Initialize the Job Router state by creating a distribution policy, queue, and workers.
+    Initialize the Job Router state by creating a distribution policy, queues, and workers.
     """
     # Create a distribution policy
     distribution_policy = await router_admin_client.upsert_distribution_policy(
-        distribution_policy_id="distribution-policy-1",
+        distribution_policy_id="distribution-policy",
         offer_expires_after_seconds=60,
         mode=LongestIdleMode(),
-        name="My distribution policy"
+        name="Distribution policy"
     )
     app.state.distribution_policy = distribution_policy
 
-    # Create a queue using the distribution policy
-    queue = await router_admin_client.upsert_queue(
-        queue_id="queue-1",
-        name="My Queue",
-        distribution_policy_id=distribution_policy.id
-    )
-    app.state.queue = queue
+    # Define queue settings and create queues
+    queues_settings = [
+        {"id": "queue-0", "name": "QueueA"},
+        {"id": "queue-1", "name": "QueueB"}
+    ]
+    app.state.queues = {}
+    for queue in queues_settings:
+        created_queue = await router_admin_client.upsert_queue(
+            queue_id=queue["id"],
+            name=queue["name"],
+            distribution_policy_id=distribution_policy.id
+        )
+        app.state.queues[queue["id"]] = created_queue
+        print_debug(f"Queue {queue['id']} created", log_level="debug")  
 
     # Define worker settings and create workers
     workers_settings = [
-        {"id": "worker-0", "some_skill": "10", "role": "RoleDefault"},
-        {"id": "worker-1", "some_skill": "11", "role": "RoleA"},
-        {"id": "worker-2", "some_skill": "12", "role": "RoleB"},
-        {"id": "worker-3", "some_skill": "13", "role": "RoleC"},
-        {"id": "worker-4", "some_skill": "14", "role": "RoleD"},
-        {"id": "worker-5", "some_skill": "15", "role": "RoleE"},
+        {"id": "worker-0", "queue_id": "queue-0", "capacity": 10, "capacity_cost": 1, "role": "RoleDefault"},
+        {"id": "worker-1", "queue_id": "queue-1", "capacity": 10, "capacity_cost": 2, "role": "RoleA"},
+        {"id": "worker-2", "queue_id": "queue-1", "capacity": 10, "capacity_cost": 2, "role": "RoleB"},
+        {"id": "worker-3", "queue_id": "queue-1", "capacity": 10, "capacity_cost": 2, "role": "RoleC"},
+        {"id": "worker-4", "queue_id": "queue-1", "capacity": 10, "capacity_cost": 2, "role": "RoleD"},
+        {"id": "worker-5", "queue_id": "queue-1", "capacity": 10, "capacity_cost": 1, "role": "RoleE"},
     ]
     app.state.workers = {}
     for worker in workers_settings:
         created_worker = await router_client.upsert_worker(
             worker_id=worker["id"],
-            capacity=10,
-            queues=[queue.id],
-            labels={"Some-Skill": worker["some_skill"], "Role": worker["role"]},
-            channels=[RouterChannel(channel_id="voice", capacity_cost_per_job=1)],
+            capacity=worker["capacity"],
+            queues=[worker["queue_id"]],
+            labels={"Role": worker["role"]},
+            channels=[RouterChannel(
+                channel_id="voice",
+                capacity_cost_per_job=worker["capacity_cost"])
+            ],
             available_for_offers=True
         )
         app.state.workers[worker["id"]] = created_worker
@@ -98,6 +108,30 @@ async def handle_job_offers(job_id: str, call_id: str, conversation_state: dict)
         except Exception as e:
             print_debug(f"Error in handle_job_offers: {e}")
 
+async def handle_job_offer_event(event: dict, conversation_state: dict):
+    """
+    Process an event triggered when a job offer is issued.
+    Extracts necessary details from the event and accepts the job offer.
+    """
+    try:
+        data = event.get("data", {})
+        worker_id = data.get("workerId")
+        job_id = data.get("jobId")
+        offer_id = data.get("offerId")
+        
+        if not (worker_id and job_id and offer_id):
+            print_debug("Invalid event data: missing workerId, jobId, or offerId", log_level="error")
+            return
+        
+        print_debug(f"Received job offer event for worker {worker_id} and job {job_id}", log_level="debug")
+        accept = await router_client.accept_job_offer(worker_id=worker_id, offer_id=offer_id)
+        print_debug(f"Worker {worker_id} accepted job {job_id} with assignment ID {accept.assignment_id}", log_level="debug")
+        
+        conversation_state['assigned_worker'] = worker_id
+        conversation_state['assignment_id'] = accept.assignment_id
+    except Exception as e:
+        print_debug(f"Error handling job offer event: {e}", log_level="error")
+
 async def handle_job_completion(job_id: str, assignment_id: str):
     """
     Complete, close, and finally delete a job.
@@ -110,6 +144,7 @@ async def handle_job_completion(job_id: str, assignment_id: str):
         options=CloseJobOptions(disposition_code="Resolved")
     )
     print_debug(f"Job {job_id} closed")
+    
     # Wait for job status to become "closed" before deletion.
     job_closed = False
     while not job_closed:

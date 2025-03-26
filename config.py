@@ -13,3 +13,6 @@ CALLBACK_EVENTS_URI = f"{CALLBACK_URI_HOST}/api/callbacks"
 AZURE_OPENAI_SERVICE_ENDPOINT = os.getenv("AZURE_OPENAI_SERVICE_ENDPOINT")
 AZURE_OPENAI_SERVICE_KEY = os.getenv("AZURE_OPENAI_SERVICE_KEY")
 AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+
+# Event Handling configuration
+TRIGGER_MODE = "polling" # "event" or "polling" note: event mode does not work job router in this version
