@@ -19,26 +19,44 @@ class Realtime(RealtimeInterface):
         self._rtclient = self._init_rtclient()
         self._transcript_buffer = ""
         self._send_text_to_acs = webSocket.send_text_to_acs
+        self._transfer_task: asyncio.Task | None = None
 
     def _init_rtclient(self) -> RTLowLevelClient:
         rtclient = RTLowLevelClient(
-            endpoint = self._aoai_service_endpoint,
-            deployment_name = self._aoai_deployment_name,
-            key = AzureKeyCredential(self._aoai_service_key),
+            url = self._aoai_service_endpoint,
+            azure_deployment = self._aoai_deployment_name,
+            key_credential = AzureKeyCredential(self._aoai_service_key),
         )
         return rtclient
     
     async def start_realtime_conversation_loop(self, conversation_state: ConversationState) -> None:
+        # 既存タスクがあればキャンセル＆クライアントをクローズ
+        if self._transfer_task:
+            self._transfer_task.cancel()
+            try:
+                await self._transfer_task
+            except asyncio.CancelledError:
+                pass
+            # クライアント側もクローズしてから再初期化
+            await self._rtclient.close()
+            self._rtclient = self._init_rtclient()
         current_role = conversation_state.current_role
         instructions = get_instructions(current_role)
         await self._rtclient.connect()
         await self._send_instructions(instructions)
-        asyncio.create_task(self.transfer_realtime_api_to_acs_until_disconnect(conversation_state.call_id))
+        # 新しい転送タスクを作成
+        self._transfer_task = asyncio.create_task(
+            self.transfer_realtime_api_to_acs_until_disconnect(conversation_state.call_id)
+        )
     
     async def transfer_realtime_api_to_acs_until_disconnect(self, call_id: str) -> None:
         try:
-            while not self._rtclient.closed:
+            while True:
                 message = await self._rtclient.recv()
+                if message is None:
+                   print(f"No message received, closing loop for call_id: {call_id}")
+                   break
+
                 if message.type == "response.audio.delta":
                     audio_data_base64 = message.delta
                     await self._send_text_to_acs(audio_data_base64)
@@ -79,7 +97,7 @@ class Realtime(RealtimeInterface):
         await self._rtclient.send(message)
     
     def _response_create_message(self, instructions: str) -> ResponseCreateMessage:
-        response = ResponseCreateParams(
+        params = ResponseCreateParams(
             modalities = {"audio", "text"},
             instructions = instructions,
             voice = "shimmer",
@@ -88,9 +106,13 @@ class Realtime(RealtimeInterface):
             input_audio_transcription = {"model": "whisper-1"}
         )
         message = ResponseCreateMessage(
-            type = response
+            response = params
         )
         return message
     
     async def rtclient_close(self) -> None:
-        await self._rtclient.close()
+        try:
+            await self._rtclient.close()
+        except AttributeError:
+            # ws が存在しない場合は何もしない
+            pass

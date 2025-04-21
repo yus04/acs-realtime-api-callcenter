@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_DEPLOYMENT_NAME: str ="your_aoai_deployment_name"
     AZURE_OPENAI_SERVICE_KEY: str ="your_aoai_service_key"
     OPERATOR_PHONE_NUMBER: str = "+1234567890"
+    OPERATOR_CALLBACK_BASEURL: str = "https://example.com/operator_callback"
 
     class Config:
         env_file = ".env"

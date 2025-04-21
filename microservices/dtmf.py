@@ -1,20 +1,24 @@
 import uuid
 from job_router import JobRouter
+from realtime import Realtime
 from call_context import CallContext
 from azure.communication.callautomation import DtmfTone, PhoneNumberIdentifier, CallConnectionClient
 
 class DTMFHandler:
-    ROLE_MAP = {
+    AI_ROLE_MAP = {
         DtmfTone.ONE.value: "RoleA",
         DtmfTone.TWO.value: "RoleB",
         DtmfTone.THREE.value: "RoleC",
-        DtmfTone.FOUR.value: "RoleD",
         DtmfTone.FIVE.value: "RoleE"
     }
+    HUMAN_ROLE_MAP = {
+        DtmfTone.FOUR.value: "RoleD"
+    }
 
-    def __init__(self, job_router: JobRouter, call_id: str) -> None:
+    def __init__(self, job_router: JobRouter, call_id: str, realtime: Realtime) -> None:
         self._call_id = call_id
         self._job_router = job_router
+        self._realtime = realtime
         self._operation_context = f"dtmf_{call_id}_{uuid.uuid4()}"
 
     async def start_recognition(self, call_connection: CallConnectionClient) -> None:
@@ -35,10 +39,12 @@ class DTMFHandler:
         self._finish_previous_job(conversation_state)
         # 新しいジョブを作成・キューに投入
         self._job_router.create_and_assign_job(call_context)
+        # リアルタイム API の初期化
+        self._realtime.start_realtime_conversation_loop(conversation_state)
 
     def _switch_role(self, call_context: CallContext, tone: str) -> None:
-        if tone in self.ROLE_MAP:
-            new_role = self.ROLE_MAP[tone]
+        if tone in self.AI_ROLE_MAP:
+            new_role = self.AI_ROLE_MAP[tone]
             print(f"Switching role to {new_role}")
             call_context.conversation_state.current_role = new_role
         else:

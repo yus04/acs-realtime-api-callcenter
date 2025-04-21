@@ -13,15 +13,16 @@ from azure.communication.callautomation import (
 )
 
 class CallHandler:
-    def __init__(self) -> None:
+    def __init__(self, call_id: str) -> None:
         connection_string = settings.ACS_CONNECTION_STRING
         self._callback_baseurl = settings.CALLBACK_BASEURL
         self._operator_phone_number = settings.OPERATOR_PHONE_NUMBER
+        self._operator_callback_baseurl = settings.OPERATOR_CALLBACK_BASEURL
         self._automation_client: CallAutomationClient = (
             CallAutomationClient.from_connection_string(connection_string)
         )
         self._connection_client: CallConnectionClient = (
-            CallConnectionClient.from_connection_string(connection_string)
+            CallConnectionClient.from_connection_string(connection_string, call_id)
         )
 
     async def answer_call(self, incoming_call_context: str, call_context: CallContext) -> None:
@@ -49,6 +50,11 @@ class CallHandler:
         caller_id = call_context.conversation_state.caller_id
         query_parameters = urlencode({"callerId": caller_id})
         callback_url = f"{self._callback_baseurl}/{call_id}?{query_parameters}"
+        print("Debug: caller_id:", caller_id)
+        print("Debug: call_id:", call_id)
+        print("Debug: callback_baseurl:", self._callback_baseurl)
+        print("Debug: query_parameters:", query_parameters)
+        print("Debug: callback_url:", callback_url)
         return callback_url
 
     def _websocket_url(self, call_context: CallContext) -> str:
@@ -66,7 +72,7 @@ class CallHandler:
         self._connection_client.transfer_call_to_participant(
             target_participant = self._phone_number_identifier(),
             operation_context = call_context.conversation_state.conversation_summary,
-            operation_callback_url = "<url_endpoint>"
+            operation_callback_url = self._operator_callback_baseurl
         )
     
     async def hangup(self, call_context: CallContext) -> None:

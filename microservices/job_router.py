@@ -14,7 +14,8 @@ from azure.communication.jobrouter.models import (
     RouterJob,
     AcceptJobOfferResult,
     CloseJobOptions,
-    LongestIdleMode
+    LongestIdleMode,
+    RouterChannel
 )
 
 class JobRouterBase:
@@ -45,7 +46,8 @@ class JobRouterBase:
             capacity = worker.capacity,
             queues = worker.queues,
             labels = worker.labels,
-            channels = worker.channels
+            channels = worker.channels,
+            available_for_offers = True
         )
         return worker
 
@@ -55,7 +57,7 @@ class JobRouterBase:
             channel_id = job.channel_id,
             queue_id = job.queue_id,
             priority = job.priority,
-            requested_worker_selectors = job.worker_selectors
+            requested_worker_selectors = job.requested_worker_selectors
         )
         return job
 
@@ -104,7 +106,7 @@ class JobRouter(JobRouterBase):
     async def init(self) -> None:
         self._dist_policy = await self.create_distribution_policy_if_not_exists()
         self._queue = await self.create_queue_if_not_exists()
-        self._worker = await self.create_worker_if_not_exists()
+        self._worker = await self.create_worker()
 
     async def create_distribution_policy_if_not_exists(self) -> DistributionPolicy:
         try:
@@ -146,17 +148,17 @@ class JobRouter(JobRouterBase):
         )
         return queue
     
-    async def create_worker_if_not_exists(self) -> RouterWorker:
+    async def create_worker(self) -> RouterWorker:
         try:
-            # ワーカーがすでに存在するか確認
-            existing_worker = await self._client.get_worker(worker_id = self._worker_id)
-            print(f"Worker '{self._worker_id}' already exists. Skipping creation.")
-            return existing_worker
+            # 既存ワーカーがいるか確認
+            await self._client.get_worker(worker_id = self._worker_id)
+            print(f"Worker '{self._worker_id}' already exists. Re-applying labels/channels.")
         except ResourceNotFoundError:
-            # 存在しなければ作成
-            print(f"Worker '{self._worker_id}' not found. Creating...")
-            worker = self._create_worker()
-            return await self._upsert_worker(worker = worker)
+            print(f"Worker '{self._worker_id}' not found. Creating new one.")
+            
+        # ワーカーの作成
+        fresh = self._create_worker()                   
+        return await self._upsert_worker(worker = fresh)
     
     def _create_worker(self) -> RouterWorker:
         worker = RouterWorker(
@@ -170,10 +172,10 @@ class JobRouter(JobRouterBase):
 
     def _create_channels(self) -> list:
         channels = [
-            {
-                "channel_id": self._channel_id,
-                "capacity_cost_per_job": self._capacity_cost_per_job
-            }
+            RouterChannel(
+                channel_id=self._channel_id,
+                capacity_cost_per_job=self._capacity_cost_per_job
+            )
         ]
         return channels
 
@@ -207,6 +209,9 @@ class JobRouter(JobRouterBase):
                 # ワーカーの状態をポーリングしてオファーを受け入れる
                 await asyncio.sleep(1)
                 worker = await self._client.get_worker(worker_id = self._worker_id)
+                print(f"Debug: Worker {worker.id} offers: {worker.offers}")
+                print("Debug: self._worker_id", self._worker_id)
+                print("Debug: conversation_state", conversation_state)
                 if worker and worker.offers:
                     job_offer = await self._accept_job_offer(worker = worker)
                     print(f"Job offer accepted: {job_offer}")
@@ -237,7 +242,8 @@ class JobRouter(JobRouterBase):
         try:
             job = await self.upsert_job(str(uuid.uuid4()))
             print(f"Job created and upserted: {job.id}")
+            print("Debug: job", job)
             await self.wait_job_offer(call_context.conversation_state)
-            print(f"Job offer accepted: {call_context.conversation_state.job_assignment_id}")
+            print(f"Debug: Job offer accepted: {call_context.conversation_state.job_assignment_id}")
         except Exception as e:
             print(f"Error creating and assigning job: {e}")
